@@ -13,9 +13,11 @@ from torchvision import transforms, datasets
 
 from util import TwoCropTransform, AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate
-from util import set_optimizer, save_model
+from util import set_optimizer, save_model, set_optimizer_scheduler
 from networks.resnet_big import SupConResNet
+from networks.clip import SupConCLIP
 from losses import SupConLoss
+from util import SemiAvesDataset
 
 try:
     import apex
@@ -35,10 +37,12 @@ def parse_option():
                         help='batch_size')
     parser.add_argument('--num_workers', type=int, default=16,
                         help='num of workers to use')
-    parser.add_argument('--epochs', type=int, default=1000,
+    parser.add_argument('--epochs', type=int, default=100,
                         help='number of training epochs')
 
     # optimization
+    parser.add_argument('--optim', type=str, default='AdamW', 
+                        choices=['AdamW', 'SGD'], help='type of optimizer to use.')
     parser.add_argument('--learning_rate', type=float, default=0.05,
                         help='learning rate')
     parser.add_argument('--lr_decay_epochs', type=str, default='700,800,900',
@@ -51,12 +55,14 @@ def parse_option():
                         help='momentum')
 
     # model dataset
-    parser.add_argument('--model', type=str, default='resnet50')
-    parser.add_argument('--dataset', type=str, default='cifar10',
-                        choices=['cifar10', 'cifar100', 'path'], help='dataset')
+    parser.add_argument('--model', type=str, default='vitb32_openclip_laion400m',
+                        choices=['resnet50', 'vitb32_openclip_laion400m'], help='model')
+    parser.add_argument('--dataset', type=str, default='semi-aves',
+                        choices=['semi-aves','cifar10', 'cifar100', 'path'], help='dataset')
     parser.add_argument('--mean', type=str, help='mean of dataset in path in form of str tuple')
     parser.add_argument('--std', type=str, help='std of dataset in path in form of str tuple')
     parser.add_argument('--data_folder', type=str, default=None, help='path to custom dataset')
+    parser.add_argument('--train_split', type=str, default='fewshot15.txt', help='train file name.')
     parser.add_argument('--size', type=int, default=32, help='parameter for RandomResizedCrop')
 
     # method
@@ -104,18 +110,19 @@ def parse_option():
         opt.model_name = '{}_cosine'.format(opt.model_name)
 
     # warm-up for large-batch training,
-    if opt.batch_size > 256:
-        opt.warm = True
-    if opt.warm:
-        opt.model_name = '{}_warm'.format(opt.model_name)
-        opt.warmup_from = 0.01
-        opt.warm_epochs = 10
-        if opt.cosine:
-            eta_min = opt.learning_rate * (opt.lr_decay_rate ** 3)
-            opt.warmup_to = eta_min + (opt.learning_rate - eta_min) * (
-                    1 + math.cos(math.pi * opt.warm_epochs / opt.epochs)) / 2
-        else:
-            opt.warmup_to = opt.learning_rate
+    # if opt.batch_size >= 256:
+    #     opt.warm = True
+    # if opt.warm:
+    #     opt.model_name = '{}_warm'.format(opt.model_name)
+    #     opt.warmup_from = 0.01
+    #     # opt.warm_epochs = 10
+    #     opt.warm_epochs = 0.25
+    #     if opt.cosine:
+    #         eta_min = opt.learning_rate * (opt.lr_decay_rate ** 3)
+    #         opt.warmup_to = eta_min + (opt.learning_rate - eta_min) * (
+    #                 1 + math.cos(math.pi * opt.warm_epochs / opt.epochs)) / 2
+    #     else:
+    #         opt.warmup_to = opt.learning_rate
 
     opt.tb_folder = os.path.join(opt.tb_path, opt.model_name)
     if not os.path.isdir(opt.tb_folder):
@@ -139,12 +146,16 @@ def set_loader(opt):
     elif opt.dataset == 'path':
         mean = eval(opt.mean)
         std = eval(opt.std)
+    elif opt.dataset == 'semi-aves':
+        mean = (0.48145466, 0.4578275, 0.40821073) # OpenAI dataset mean and std
+        std = (0.26862954, 0.26130258, 0.27577711)
     else:
         raise ValueError('dataset not supported: {}'.format(opt.dataset))
+    
     normalize = transforms.Normalize(mean=mean, std=std)
 
     train_transform = transforms.Compose([
-        transforms.RandomResizedCrop(size=opt.size, scale=(0.2, 1.)),
+        transforms.RandomResizedCrop(size=opt.size, scale=(0.2, 1.)), # note the scale of 0.2 is relative small here, might need to increase
         transforms.RandomHorizontalFlip(),
         transforms.RandomApply([
             transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
@@ -165,8 +176,13 @@ def set_loader(opt):
     elif opt.dataset == 'path':
         train_dataset = datasets.ImageFolder(root=opt.data_folder,
                                             transform=TwoCropTransform(train_transform))
+    elif opt.dataset == 'semi-aves':
+        train_dataset = SemiAvesDataset(dataset_root=opt.data_folder,
+                                                 split=opt.train_split, 
+                                                 transform=TwoCropTransform(train_transform)) 
     else:
         raise ValueError(opt.dataset)
+
 
     train_sampler = None
     train_loader = torch.utils.data.DataLoader(
@@ -177,7 +193,11 @@ def set_loader(opt):
 
 
 def set_model(opt):
-    model = SupConResNet(name=opt.model)
+    if opt.model == 'resnet50':
+        model = SupConResNet(name=opt.model)
+    elif opt.model == 'vitb32_openclip_laion400m':
+        model = SupConCLIP(name=opt.model)
+
     criterion = SupConLoss(temperature=opt.temp)
 
     # enable synchronized Batch Normalization
@@ -194,7 +214,7 @@ def set_model(opt):
     return model, criterion
 
 
-def train(train_loader, model, criterion, optimizer, epoch, opt):
+def train(train_loader, model, criterion, optimizer, scheduler, epoch, opt):
     """one epoch training"""
     model.train()
 
@@ -213,7 +233,7 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         bsz = labels.shape[0]
 
         # warm-up learning rate
-        warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
+        # warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
 
         # compute loss
         features = model(images)
@@ -234,6 +254,7 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        scheduler.step() # update learning rate for each iteration
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -262,7 +283,8 @@ def main():
     model, criterion = set_model(opt)
 
     # build optimizer
-    optimizer = set_optimizer(opt, model)
+    # optimizer = set_optimizer(opt, model)
+    optimizer, scheduler = set_optimizer_scheduler(opt, model, train_loader)
 
     # tensorboard
     logger = tb_logger.Logger(logdir=opt.tb_folder, flush_secs=2)
@@ -273,7 +295,7 @@ def main():
 
         # train for one epoch
         time1 = time.time()
-        loss = train(train_loader, model, criterion, optimizer, epoch, opt)
+        loss = train(train_loader, model, criterion, optimizer, scheduler, epoch, opt)
         time2 = time.time()
         print('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
 
@@ -290,6 +312,9 @@ def main():
     save_file = os.path.join(
         opt.save_folder, 'last.pth')
     save_model(model, optimizer, opt, opt.epochs, save_file)
+
+    # test the trained model 
+    # test
 
 
 if __name__ == '__main__':
