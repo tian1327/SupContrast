@@ -24,9 +24,11 @@ except ImportError:
 def parse_option():
     parser = argparse.ArgumentParser('argument for training')
 
-    parser.add_argument('--print_freq', type=int, default=10,
+    parser.add_argument('--prefix', type=str, default=None, help='case prefix')
+
+    parser.add_argument('--print_freq', type=int, default=1,
                         help='print frequency')
-    parser.add_argument('--save_freq', type=int, default=50,
+    parser.add_argument('--save_freq', type=int, default=1,
                         help='save frequency')
     parser.add_argument('--batch_size', type=int, default=256,
                         help='batch_size')

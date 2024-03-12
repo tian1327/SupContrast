@@ -8,7 +8,9 @@ class SupConCLIP(nn.Module):
         model, preprocess, tokenizer = get_engine(model_cfg=name)
         self.encoder = model.encode_image
         self.visual = model.visual
-        self.transformer = model.transformer
+        # self.transformer = model.transformer
+        self.preprocess = preprocess
+        self.tokenizer = tokenizer
 
     def forward(self, x):
         feat = self.encoder(x)
@@ -23,6 +25,8 @@ class SupCECLIP(nn.Module):
         model, preprocess, tokenizer = get_engine(model_cfg=name)
         self.encoder = model.encode_image
         self.fc = nn.Linear(512, num_classes)
+        self.preprocess = preprocess
+        self.tokenizer = tokenizer
 
     def forward(self, x):
 

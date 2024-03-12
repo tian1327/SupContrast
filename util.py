@@ -269,10 +269,10 @@ class SemiAvesDataset(Dataset):
             lines = f.readlines()
 
         self.data = []
-        for line in lines:    
-            path, id = line.strip('\n').split(' ')
+        for line in lines:
+            path, id, is_fewshot = line.strip('\n').split(' ')
             file_path = os.path.join(self.dataset_root, path)
-            self.data.append((file_path, int(id)))
+            self.data.append((file_path, int(id), int(is_fewshot)))
     
         self.transform = transform
         print(f'# of images in {split}: {len(self.data)}')
@@ -284,11 +284,8 @@ class SemiAvesDataset(Dataset):
     def __getitem__(self, i):
         img = self.loader(self.data[i][0])
         label = self.data[i][1]
+        source = self.data[i][2] # 0 for retrived data, 1 for fewshot data
         img = self.transform(img)
-        # if self.tokenized_text_prompts is not None:
-        #     tokenized_text = self.tokenized_text_prompts[str(label)]['all'][:1]
-        # else:
-        #     tokenized_text = None
+        # tokenized_text = self.tokenized_text_prompts[str(label)]['all'][:1] if self.tokenized_text_prompts else None
 
-        # return img, label, tokenized_text
-        return img, label
+        return img, label, label, source # note here i use label in place of the tokenized text
