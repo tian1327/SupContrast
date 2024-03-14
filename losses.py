@@ -41,7 +41,7 @@ class SupConLoss(nn.Module):
         if len(features.shape) > 3:
             features = features.view(features.shape[0], features.shape[1], -1)
         
-        print('features.shape=', features.shape) # 256, 2, 512
+        # print('features.shape=', features.shape) # 256, 2, 512
         
 
         batch_size = features.shape[0]
@@ -57,12 +57,12 @@ class SupConLoss(nn.Module):
         else:
             mask = mask.float().to(device)
 
-        print('mask.shape=', mask.shape) # 256, 256
+        # print('mask.shape=', mask.shape) # 256, 256
 
         contrast_count = features.shape[1]
         contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
-        print('contrast_feature.shape=', contrast_feature.shape) # 512, 512
-        print('contrast_count=', contrast_count) # 2
+        # print('contrast_feature.shape=', contrast_feature.shape) # 512, 512
+        # print('contrast_count=', contrast_count) # 2
         if self.contrast_mode == 'one':
             anchor_feature = features[:, 0]
             anchor_count = 1
@@ -72,25 +72,25 @@ class SupConLoss(nn.Module):
         else:
             raise ValueError('Unknown mode: {}'.format(self.contrast_mode))
 
-        print('anchor_feature.shape=', anchor_feature.shape) # 512, 512
-        print('anchor_count=', anchor_count) # 2
+        # print('anchor_feature.shape=', anchor_feature.shape) # 512, 512
+        # print('anchor_count=', anchor_count) # 2
 
         # compute logits
         anchor_dot_contrast = torch.div(
             torch.matmul(anchor_feature, contrast_feature.T),
             self.temperature)
-        print('anchor_dot_contrast.shape=', anchor_dot_contrast.shape) # 512, 512
+        # print('anchor_dot_contrast.shape=', anchor_dot_contrast.shape) # 512, 512
 
 
         # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
-        print('logits.shape=', logits.shape) # 512, 512
-        print('logits_max', logits_max) # 10, 10, ..., 10
+        # print('logits.shape=', logits.shape) # 512, 512
+        # print('logits_max', logits_max) # 10, 10, ..., 10
 
         # tile mask
         mask = mask.repeat(anchor_count, contrast_count)
-        print('mask.shape=', mask.shape) # 256, 256
+        # print('mask.shape=', mask.shape) # 256, 256
 
         # mask-out self-contrast cases
         logits_mask = torch.scatter(
@@ -100,8 +100,8 @@ class SupConLoss(nn.Module):
             0
         )
         mask = mask * logits_mask
-        print('mask.shape=', mask.shape)
-        print('logits_mask.shape=', logits_mask.shape)
+        # print('mask.shape=', mask.shape)
+        # print('logits_mask.shape=', logits_mask.shape)
 
         # compute log_prob
         exp_logits = torch.exp(logits) * logits_mask

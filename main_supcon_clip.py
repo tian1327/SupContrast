@@ -10,7 +10,7 @@ import tensorboard_logger as tb_logger
 import torch
 import torch.backends.cudnn as cudnn
 from torchvision import transforms, datasets
-
+from PIL import Image
 from util import TwoCropTransform, AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate
 from util import set_optimizer, save_model, set_optimizer_scheduler
@@ -106,8 +106,8 @@ def parse_option():
     for it in iterations:
         opt.lr_decay_epochs.append(int(it))
 
-    opt.model_name = '{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}'.\
-        format(opt.method, opt.dataset, opt.model, opt.learning_rate,
+    opt.model_name = '{}_{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}'.\
+        format(opt.prefix, opt.method, opt.dataset, opt.model, opt.learning_rate,
                opt.weight_decay, opt.batch_size, opt.temp, opt.trial)
 
     if opt.cosine:
@@ -132,12 +132,14 @@ def parse_option():
     if not os.path.isdir(opt.tb_folder):
         os.makedirs(opt.tb_folder)
 
-    opt.save_folder = os.path.join(opt.model_path, f'{opt.model_name}_{opt.prefix}')
+    opt.save_folder = os.path.join(opt.model_path, f'{opt.model_name}')
     if not os.path.isdir(opt.save_folder):
         os.makedirs(opt.save_folder)
 
     return opt
 
+def _convert_image_to_rgb(image):
+    return image.convert("RGB")
 
 def set_loader(opt):
     # construct data loader
@@ -162,13 +164,16 @@ def set_loader(opt):
     train_transform = transforms.Compose([
         transforms.RandomResizedCrop(size=opt.size, 
                                     #  scale=(0.2, 1.),
-                                     scale=(0.9, 1.)
+                                     scale=(0.9, 1.),
+                                     ratio=(0.75, 1.3333),
+                                    interpolation=Image.BICUBIC
                                      ), # note the scale of 0.2 is relative small here, might need to increase
         transforms.RandomHorizontalFlip(),
-        transforms.RandomApply([
-            transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
-        ], p=0.8),
-        transforms.RandomGrayscale(p=0.2),
+        # transforms.RandomApply([
+        #     transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)
+        # ], p=0.8),
+        _convert_image_to_rgb,
+        # transforms.RandomGrayscale(p=0.2),
         transforms.ToTensor(),
         normalize,
     ])

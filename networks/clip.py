@@ -8,12 +8,22 @@ class SupConCLIP(nn.Module):
         model, preprocess, tokenizer = get_engine(model_cfg=name)
         self.encoder = model.encode_image
         self.visual = model.visual
-        # self.transformer = model.transformer
+        self.transformer = model.transformer
         self.preprocess = preprocess
         self.tokenizer = tokenizer
 
+        # add a mlp head
+        """
+        self.head = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 128)
+        )
+        """
+
     def forward(self, x):
         feat = self.encoder(x)
+        # feat = self.head(feat) # add a mlp head
         feat = feat / feat.norm(dim=-1, keepdim=True) # Normalization
         return feat
 
