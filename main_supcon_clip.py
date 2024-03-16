@@ -16,7 +16,7 @@ from util import adjust_learning_rate, warmup_learning_rate
 from util import set_optimizer, save_model, set_optimizer_scheduler
 from networks.resnet_big import SupConResNet
 from networks.clip import SupConCLIP
-from losses import SupConLoss
+from losses import SupConLoss, FASupConLoss
 from util import SemiAvesDataset
 
 try:
@@ -71,7 +71,7 @@ def parse_option():
 
     # method
     parser.add_argument('--method', type=str, default='SupCon',
-                        choices=['SupCon', 'SimCLR'], help='choose method')
+                        choices=['SupCon', 'FASupCon', 'SimCLR'], help='choose method')
 
     # temperature
     parser.add_argument('--temp', type=float, default=0.07,
@@ -212,7 +212,14 @@ def set_model(opt):
     elif opt.model == 'vitb32_openclip_laion400m':
         model = SupConCLIP(name=opt.model)
 
-    criterion = SupConLoss(temperature=opt.temp)
+    if opt.method == 'SupCon' or opt.method == 'SimCLR':
+        criterion = SupConLoss(temperature=opt.temp)
+    elif opt.method == 'FASupCon':
+        criterion = FASupConLoss(temperature=opt.temp)
+    else:
+        raise ValueError('contrastive method not supported: {}'.
+                         format(opt.method))
+
 
     # enable synchronized Batch Normalization
     if opt.syncBN:
@@ -252,9 +259,12 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, opt):
         # compute loss
         features = model(images)
         f1, f2 = torch.split(features, [bsz, bsz], dim=0)
+        fewshot_ct = -1
         features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
         if opt.method == 'SupCon':
             loss = criterion(features, labels)
+        elif opt.method == 'FASupCon':
+            loss, fewshot_ct = criterion(features, labels, source)        
         elif opt.method == 'SimCLR':
             loss = criterion(features)
         else:
@@ -279,9 +289,9 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, opt):
             print('Train: [{0}][{1}/{2}]\t'
                   'BT {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'DT {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'loss {loss.val:.3f} ({loss.avg:.3f})'.format(
+                  'loss {loss.val:.3f} ({loss.avg:.3f}) FS_CT {fewshot_ct}'.format(
                    epoch, idx + 1, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses))
+                   data_time=data_time, loss=losses, fewshot_ct=fewshot_ct))
             sys.stdout.flush()
 
     return losses.avg
@@ -318,7 +328,7 @@ def main():
         logger.log_value('loss', loss, epoch)
         logger.log_value('learning_rate', optimizer.param_groups[0]['lr'], epoch)
 
-        if epoch % opt.save_freq == 0:
+        if epoch == 1 or epoch % opt.save_freq == 0:
             save_file = os.path.join(
                 opt.save_folder, 'ckpt_epoch_{epoch}.pth'.format(epoch=epoch))
             save_model(model, optimizer, opt, epoch, save_file)
